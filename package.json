@@ -57,7 +57,9 @@
     "three": "^0.181.2",
     "typescript": "^5.9.3",
     "vaul": "^1.1.2",
-    "zod": "^3.24.4"
+    "zod": "^3.24.4",
+    "chart.js": "^4.4.0",
+    "react-chartjs-2": "^5.2.0"
   },
   "scripts": {
     "start": "craco start",

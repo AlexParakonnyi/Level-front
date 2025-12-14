@@ -1,4 +1,4 @@
-// hooks/useWebSocket.ts - ДЛЯ WEBSOCKETS НА ПОРТУ 81
+// hooks/useWebSocket.ts - ИСПРАВЛЕННАЯ ВЕРСИЯ
 import { useState, useEffect, useRef, useCallback } from "react";
 import { SensorData } from "@/utils/sensorCalculations";
 
@@ -7,19 +7,12 @@ interface WebSocketConfig {
   maxReconnectAttempts?: number;
 }
 
-/**
- * Получает хост для WebSocket соединения
- * Если определена REACT_APP_DEBUG_IP - использует её
- * Иначе использует текущий host страницы
- */
 function getWebSocketHost(): string {
   const debugIp = process.env.REACT_APP_DEBUG_IP;
-
   if (debugIp && debugIp.trim() !== "") {
     console.log("Using DEBUG IP for WebSocket:", debugIp);
     return debugIp.trim();
   }
-
   console.log("Using current host for WebSocket:", window.location.hostname);
   return window.location.hostname;
 }
@@ -30,13 +23,15 @@ export function useWebSocket(endpoint: string, config: WebSocketConfig = {}) {
   const [sensorData, setSensorData] = useState<SensorData | null>(null);
   const [isConnected, setIsConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [messageRate, setMessageRate] = useState(0); // Сообщений в секунду
+  const [messageRate, setMessageRate] = useState(0);
 
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<number | null>(null);
   const reconnectAttemptsRef = useRef(0);
   const messageCountRef = useRef(0);
   const lastRateUpdateRef = useRef(Date.now());
+  const isMountedRef = useRef(true); // ДОБАВЛЕНО: отслеживание монтирования
+  const isConnectingRef = useRef(false); // ДОБАВЛЕНО: предотвращение множественных подключений
 
   // Очистка ресурсов
   const cleanup = useCallback(() => {
@@ -46,29 +41,42 @@ export function useWebSocket(endpoint: string, config: WebSocketConfig = {}) {
     }
 
     if (wsRef.current) {
-      // Удаляем обработчики перед закрытием
-      wsRef.current.onopen = null;
-      wsRef.current.onmessage = null;
-      wsRef.current.onerror = null;
-      wsRef.current.onclose = null;
-
-      if (wsRef.current.readyState === WebSocket.OPEN) {
-        wsRef.current.close();
-      }
+      const ws = wsRef.current;
       wsRef.current = null;
+
+      // Удаляем обработчики
+      ws.onopen = null;
+      ws.onmessage = null;
+      ws.onerror = null;
+      ws.onclose = null;
+
+      // Закрываем только если соединение открыто
+      if (
+        ws.readyState === WebSocket.OPEN ||
+        ws.readyState === WebSocket.CONNECTING
+      ) {
+        ws.close();
+      }
     }
+
+    isConnectingRef.current = false;
   }, []);
 
   // Подключение к WebSocket
   const connectWebSocket = useCallback(() => {
+    // ИСПРАВЛЕНИЕ: Проверяем, что компонент примонтирован и нет активного подключения
+    if (!isMountedRef.current || isConnectingRef.current) {
+      return;
+    }
+
     // Очищаем предыдущее соединение
     cleanup();
+
+    isConnectingRef.current = true;
 
     try {
       const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
       const host = getWebSocketHost();
-
-      // WebSocket на порту 81 (без endpoint - прямое подключение)
       const wsUrl = `${protocol}//${host}:81`;
 
       console.log("Connecting to WebSocket:", wsUrl);
@@ -76,21 +84,26 @@ export function useWebSocket(endpoint: string, config: WebSocketConfig = {}) {
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 
-      // Обработчик открытия соединения
       ws.onopen = () => {
+        if (!isMountedRef.current) {
+          ws.close();
+          return;
+        }
+
         console.log("✓ WebSocket connected");
         setIsConnected(true);
         setError(null);
         reconnectAttemptsRef.current = 0;
+        isConnectingRef.current = false;
       };
 
-      // Обработчик сообщений
       ws.onmessage = (event) => {
+        if (!isMountedRef.current) return;
+
         try {
-          // Заменяем nan и inf на null перед парсингом JSON
           let jsonString = event.data;
 
-          // Заменяем все варианты NaN и Infinity
+          // Очистка данных от NaN и Infinity
           jsonString = jsonString
             .replace(/:\s*nan\b/gi, ": null")
             .replace(/:\s*-nan\b/gi, ": null")
@@ -101,9 +114,7 @@ export function useWebSocket(endpoint: string, config: WebSocketConfig = {}) {
 
           const data = JSON.parse(jsonString) as SensorData;
 
-          // Проверяем валидность данных и заменяем null на 0
           if (data.roll !== undefined && data.pitch !== undefined) {
-            // Очищаем данные от null значений
             const cleanData: SensorData = {
               roll: data.roll ?? 0,
               pitch: data.pitch ?? 0,
@@ -133,33 +144,30 @@ export function useWebSocket(endpoint: string, config: WebSocketConfig = {}) {
             }
           }
         } catch (err) {
-          console.error(
-            "Failed to parse WebSocket message:",
-            err,
-            "Raw data:",
-            event.data
-          );
-          // Не устанавливаем ошибку, чтобы не прерывать поток данных
-          // setError("Invalid data format");
+          console.error("Failed to parse WebSocket message:", err);
         }
       };
 
-      // Обработчик ошибок
       ws.onerror = (event) => {
+        if (!isMountedRef.current) return;
         console.error("WebSocket error:", event);
         setError("Connection error");
+        isConnectingRef.current = false;
       };
 
-      // Обработчик закрытия
       ws.onclose = (event) => {
-        console.log(
-          `WebSocket closed (code: ${event.code}, reason: ${event.reason})`
-        );
+        if (!isMountedRef.current) return;
+
+        console.log(`WebSocket closed (code: ${event.code})`);
         setIsConnected(false);
         wsRef.current = null;
+        isConnectingRef.current = false;
 
-        // Попытка переподключения
-        if (reconnectAttemptsRef.current < maxReconnectAttempts) {
+        // ИСПРАВЛЕНИЕ: Переподключаемся только если компонент еще примонтирован
+        if (
+          isMountedRef.current &&
+          reconnectAttemptsRef.current < maxReconnectAttempts
+        ) {
           const delay = Math.min(
             reconnectDelay * Math.pow(1.5, reconnectAttemptsRef.current),
             30000
@@ -172,26 +180,31 @@ export function useWebSocket(endpoint: string, config: WebSocketConfig = {}) {
           );
 
           reconnectTimeoutRef.current = window.setTimeout(() => {
-            reconnectAttemptsRef.current++;
-            connectWebSocket();
+            if (isMountedRef.current) {
+              reconnectAttemptsRef.current++;
+              connectWebSocket();
+            }
           }, delay);
-        } else {
-          setError(
-            "Connection lost. Maximum reconnection attempts reached. Please refresh the page."
-          );
+        } else if (reconnectAttemptsRef.current >= maxReconnectAttempts) {
+          setError("Connection lost. Maximum reconnection attempts reached.");
         }
       };
     } catch (err) {
       console.error("Failed to create WebSocket:", err);
       setError("Failed to establish connection");
+      isConnectingRef.current = false;
     }
   }, [cleanup, reconnectDelay, maxReconnectAttempts]);
 
   // Подключаемся при монтировании
   useEffect(() => {
+    isMountedRef.current = true;
     connectWebSocket();
 
+    // ИСПРАВЛЕНИЕ: Важная очистка при размонтировании
     return () => {
+      console.log("WebSocket hook unmounting - cleaning up");
+      isMountedRef.current = false;
       cleanup();
     };
   }, [connectWebSocket, cleanup]);

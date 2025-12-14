@@ -10,28 +10,24 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
-import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Wifi,
   Trash2,
-  Save,
-  AlertCircle,
-  CheckCircle,
   Loader2,
   RotateCw,
   Target,
   Sliders,
+  AlertCircle,
+  Eye,
+  EyeOff,
 } from "lucide-react";
 import { apiRequest } from "@/utils/backend";
-
-interface Settings {
-  level_range: { min: number; max: number };
-  zero_offset: number;
-  axis_swap: boolean;
-}
+import { RangeSettings } from "@/components/RangeSettings";
+import { useToast } from "@/contexts/ToastContext";
+import { useSettings } from "@/contexts/SettingsContext";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 
 export function SettingsPage() {
   // WiFi Settings
@@ -40,62 +36,32 @@ export function SettingsPage() {
   const [ip, setIp] = useState("");
   const [gateway, setGateway] = useState("");
 
-  // Level Settings
-  const [settings, setSettings] = useState<Settings>({
-    level_range: { min: -45, max: 45 },
-    zero_offset: 0,
-    axis_swap: false,
-  });
-
   const [isLoading, setIsLoading] = useState(false);
-  const [isLoadingSettings, setIsLoadingSettings] = useState(true);
-  const [message, setMessage] = useState<{
-    type: "success" | "error";
-    text: string;
-  } | null>(null);
 
-  // Загрузка настроек при монтировании
+  const { addToast } = useToast();
+  const {
+    settings,
+    updateSettings,
+    isLoading: isLoadingSettings,
+  } = useSettings();
+
+  // Локальные настройки для редактирования
+  const [localSettings, setLocalSettings] = useState(settings);
+
+  // Синхронизация с глобальными настройками
   useEffect(() => {
-    loadSettings();
-  }, []);
-
-  const loadSettings = async () => {
-    setIsLoadingSettings(true);
-    try {
-      const data = await apiRequest<Settings>("/settings");
-
-      // Обновляем состояние полученными данными
-      setSettings({
-        level_range: {
-          min: data.level_range?.min ?? -45,
-          max: data.level_range?.max ?? 45,
-        },
-        zero_offset: data.zero_offset ?? 0,
-        axis_swap: data.axis_swap ?? false,
-      });
-
-      console.log("Settings loaded:", data);
-    } catch (error) {
-      console.error("Failed to load settings:", error);
-      setMessage({
-        type: "error",
-        text: "Failed to load settings from device",
-      });
-    } finally {
-      setIsLoadingSettings(false);
-    }
-  };
+    setLocalSettings(settings);
+  }, [settings]);
 
   // ===== WiFi Functions =====
 
   const handleSaveWiFi = async () => {
     if (!ssid || !password || !ip || !gateway) {
-      setMessage({ type: "error", text: "Please fill in all fields" });
+      addToast("Please fill in all fields", "error");
       return;
     }
 
     setIsLoading(true);
-    setMessage(null);
 
     try {
       await apiRequest(
@@ -104,19 +70,13 @@ export function SettingsPage() {
         )}&ip=${encodeURIComponent(ip)}&gateway=${encodeURIComponent(gateway)}`
       );
 
-      setMessage({
-        type: "success",
-        text: "WiFi configuration saved! Device is restarting...",
-      });
+      addToast("WiFi configuration saved! Device is restarting...", "success");
 
       setTimeout(() => {
         window.location.href = "/";
       }, 3000);
     } catch (error) {
-      setMessage({
-        type: "error",
-        text: "Error saving WiFi configuration.",
-      });
+      addToast("Error saving WiFi configuration", "error");
     } finally {
       setIsLoading(false);
     }
@@ -128,24 +88,17 @@ export function SettingsPage() {
     }
 
     setIsLoading(true);
-    setMessage(null);
 
     try {
       await apiRequest("/clear_credentials");
 
-      setMessage({
-        type: "success",
-        text: "WiFi credentials cleared! Restarting in AP mode...",
-      });
+      addToast("WiFi credentials cleared! Restarting in AP mode...", "success");
 
       setTimeout(() => {
         window.location.href = "http://192.168.4.1";
       }, 3000);
     } catch (error) {
-      setMessage({
-        type: "error",
-        text: "Error clearing credentials.",
-      });
+      addToast("Error clearing credentials", "error");
     } finally {
       setIsLoading(false);
     }
@@ -155,20 +108,18 @@ export function SettingsPage() {
 
   const handleCalibrateZero = async () => {
     setIsLoading(true);
-    setMessage(null);
 
     try {
       const result = await apiRequest<{ offset: number }>("/calibrate_zero");
-      setSettings((prev) => ({ ...prev, zero_offset: result.offset }));
-      setMessage({
-        type: "success",
-        text: `Zero calibrated! Offset: ${result.offset.toFixed(2)}°`,
-      });
+      const newSettings = { ...localSettings, zero_offset: result.offset };
+      setLocalSettings(newSettings);
+      updateSettings(newSettings);
+      addToast(
+        `Zero calibrated! Offset: ${result.offset.toFixed(2)}°`,
+        "success"
+      );
     } catch (error) {
-      setMessage({
-        type: "error",
-        text: "Error calibrating zero.",
-      });
+      addToast("Error calibrating zero", "error");
     } finally {
       setIsLoading(false);
     }
@@ -176,64 +127,63 @@ export function SettingsPage() {
 
   const handleSaveOffset = async () => {
     setIsLoading(true);
-    setMessage(null);
 
     try {
-      await apiRequest(`/set_zero_offset?offset=${settings.zero_offset}`);
-      setMessage({
-        type: "success",
-        text: "Zero offset saved!",
-      });
+      await apiRequest(`/set_zero_offset?offset=${localSettings.zero_offset}`);
+      updateSettings({ zero_offset: localSettings.zero_offset });
+      addToast("Zero offset saved!", "success");
     } catch (error) {
-      setMessage({
-        type: "error",
-        text: "Error saving offset.",
-      });
+      addToast("Error saving offset", "error");
     } finally {
       setIsLoading(false);
     }
   };
 
   const handleToggleAxisSwap = async () => {
-    const newSwap = !settings.axis_swap;
+    const newSwap = !localSettings.axis_swap;
 
     setIsLoading(true);
-    setMessage(null);
 
     try {
       await apiRequest(`/set_axis_swap?swap=${newSwap}`);
-      setSettings((prev) => ({ ...prev, axis_swap: newSwap }));
-      setMessage({
-        type: "success",
-        text: `Axis swap ${newSwap ? "enabled" : "disabled"}!`,
-      });
+      const newSettings = { ...localSettings, axis_swap: newSwap };
+      setLocalSettings(newSettings);
+      updateSettings(newSettings);
+      addToast(`Axis swap ${newSwap ? "enabled" : "disabled"}!`, "success");
     } catch (error) {
-      setMessage({
-        type: "error",
-        text: "Error toggling axis swap.",
-      });
+      addToast("Error toggling axis swap", "error");
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handleSaveRange = async () => {
+  const handleToggleShowPitch = async () => {
+    const newShowPitch = !localSettings.show_pitch;
+
+    // Сохраняем только локально, без отправки на сервер
+    const newSettings = { ...localSettings, show_pitch: newShowPitch };
+    setLocalSettings(newSettings);
+    updateSettings(newSettings);
+    addToast(
+      `Pitch display ${newShowPitch ? "enabled" : "disabled"}!`,
+      "success"
+    );
+  };
+
+  const handleSaveRanges = async () => {
     setIsLoading(true);
-    setMessage(null);
 
     try {
       await apiRequest(
-        `/set_level_range?min=${settings.level_range.min}&max=${settings.level_range.max}`
+        `/set_ranges?roll_min=${localSettings.roll_range.min}&roll_max=${localSettings.roll_range.max}&pitch_min=${localSettings.pitch_range.min}&pitch_max=${localSettings.pitch_range.max}`
       );
-      setMessage({
-        type: "success",
-        text: "Level range saved!",
+      updateSettings({
+        roll_range: localSettings.roll_range,
+        pitch_range: localSettings.pitch_range,
       });
+      addToast("Ranges saved successfully!", "success");
     } catch (error) {
-      setMessage({
-        type: "error",
-        text: "Error saving level range.",
-      });
+      addToast("Error saving ranges", "error");
     } finally {
       setIsLoading(false);
     }
@@ -267,25 +217,6 @@ export function SettingsPage() {
         </p>
       </div>
 
-      {/* Message Alert */}
-      {message && (
-        <Alert
-          variant={message.type === "error" ? "destructive" : "default"}
-          className={
-            message.type === "success"
-              ? "border-green-500 text-green-900 dark:text-green-100 bg-green-50 dark:bg-green-900/20"
-              : ""
-          }
-        >
-          {message.type === "success" ? (
-            <CheckCircle className="h-4 w-4" />
-          ) : (
-            <AlertCircle className="h-4 w-4" />
-          )}
-          <AlertDescription>{message.text}</AlertDescription>
-        </Alert>
-      )}
-
       {/* Tabs */}
       <Tabs defaultValue="level" className="w-full">
         <TabsList className="grid w-full grid-cols-2">
@@ -295,6 +226,61 @@ export function SettingsPage() {
 
         {/* Level Settings Tab */}
         <TabsContent value="level" className="space-y-6">
+          {/* Show Pitch Toggle - НОВАЯ КАРТОЧКА */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                {localSettings.show_pitch ? (
+                  <Eye className="w-5 h-5 text-blue-600 dark:text-blue-400" />
+                ) : (
+                  <EyeOff className="w-5 h-5 text-slate-600 dark:text-slate-400" />
+                )}
+                Pitch Display
+              </CardTitle>
+              <CardDescription>
+                Show or hide Pitch data in the 3D visualization
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="flex items-center justify-between">
+                <div className="space-y-0.5">
+                  <Label>Show Pitch Data</Label>
+                  <p className="text-sm text-slate-500">
+                    {localSettings.show_pitch
+                      ? "Pitch angle and range are visible"
+                      : "Only Roll data is shown"}
+                  </p>
+                </div>
+                <Switch
+                  checked={localSettings.show_pitch}
+                  onCheckedChange={handleToggleShowPitch}
+                  disabled={isLoading}
+                />
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Working Ranges */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Sliders className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
+                Working Ranges
+              </CardTitle>
+              <CardDescription>
+                Define min and max angles for Roll and Pitch
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <RangeSettings
+                settings={localSettings}
+                onChange={setLocalSettings}
+                onSave={handleSaveRanges}
+                isLoading={isLoading}
+              />
+            </CardContent>
+          </Card>
+
           {/* Zero Offset */}
           <Card>
             <CardHeader>
@@ -329,9 +315,9 @@ export function SettingsPage() {
                     id="offset"
                     type="number"
                     step="0.1"
-                    value={settings.zero_offset}
+                    value={localSettings.zero_offset}
                     onChange={(e) =>
-                      setSettings((prev) => ({
+                      setLocalSettings((prev) => ({
                         ...prev,
                         zero_offset: parseFloat(e.target.value) || 0,
                       }))
@@ -343,11 +329,15 @@ export function SettingsPage() {
                     disabled={isLoading}
                     variant="outline"
                   >
-                    <Save className="h-4 w-4" />
+                    {isLoading ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <span>Save</span>
+                    )}
                   </Button>
                 </div>
                 <p className="text-xs text-slate-500">
-                  Current offset: {settings.zero_offset.toFixed(2)}°
+                  Current offset: {localSettings.zero_offset.toFixed(2)}°
                 </p>
               </div>
             </CardContent>
@@ -367,130 +357,17 @@ export function SettingsPage() {
                 <div className="space-y-0.5">
                   <Label>Swap Roll ↔ Pitch</Label>
                   <p className="text-sm text-slate-500">
-                    {settings.axis_swap
+                    {localSettings.axis_swap
                       ? "Roll and Pitch are swapped"
                       : "Normal mode"}
                   </p>
                 </div>
                 <Switch
-                  checked={settings.axis_swap}
+                  checked={localSettings.axis_swap}
                   onCheckedChange={handleToggleAxisSwap}
                   disabled={isLoading}
                 />
               </div>
-            </CardContent>
-          </Card>
-
-          {/* Level Range */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Sliders className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
-                Working Range
-              </CardTitle>
-              <CardDescription>
-                Define min and max angles for the working range
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              {/* Min Slider */}
-              <div className="space-y-3">
-                <div className="flex justify-between items-center">
-                  <Label>Minimum Angle</Label>
-                  <span className="text-sm font-mono font-bold">
-                    {settings.level_range.min}°
-                  </span>
-                </div>
-                <Slider
-                  value={[settings.level_range.min]}
-                  onValueChange={([value]: number[]) =>
-                    setSettings((prev) => ({
-                      ...prev,
-                      level_range: { ...prev.level_range, min: value },
-                    }))
-                  }
-                  min={-90}
-                  max={0}
-                  step={1}
-                  disabled={isLoading}
-                />
-                <Input
-                  type="number"
-                  value={settings.level_range.min}
-                  onChange={(e) =>
-                    setSettings((prev) => ({
-                      ...prev,
-                      level_range: {
-                        ...prev.level_range,
-                        min: parseInt(e.target.value) || -45,
-                      },
-                    }))
-                  }
-                  disabled={isLoading}
-                  className="w-24"
-                />
-              </div>
-
-              {/* Max Slider */}
-              <div className="space-y-3">
-                <div className="flex justify-between items-center">
-                  <Label>Maximum Angle</Label>
-                  <span className="text-sm font-mono font-bold">
-                    {settings.level_range.max}°
-                  </span>
-                </div>
-                <Slider
-                  value={[settings.level_range.max]}
-                  onValueChange={([value]: number[]) =>
-                    setSettings((prev) => ({
-                      ...prev,
-                      level_range: { ...prev.level_range, max: value },
-                    }))
-                  }
-                  min={0}
-                  max={90}
-                  step={1}
-                  disabled={isLoading}
-                />
-                <Input
-                  type="number"
-                  value={settings.level_range.max}
-                  onChange={(e) =>
-                    setSettings((prev) => ({
-                      ...prev,
-                      level_range: {
-                        ...prev.level_range,
-                        max: parseInt(e.target.value) || 45,
-                      },
-                    }))
-                  }
-                  disabled={isLoading}
-                  className="w-24"
-                />
-              </div>
-
-              {/* Range Preview */}
-              <div className="p-4 bg-slate-100 dark:bg-slate-800 rounded-lg">
-                <p className="text-sm text-center">
-                  Working range:{" "}
-                  <span className="font-bold">
-                    {settings.level_range.min}° to {settings.level_range.max}°
-                  </span>
-                </p>
-              </div>
-
-              <Button
-                onClick={handleSaveRange}
-                disabled={isLoading}
-                className="w-full"
-              >
-                {isLoading ? (
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                ) : (
-                  <Save className="mr-2 h-4 w-4" />
-                )}
-                Save Range
-              </Button>
             </CardContent>
           </Card>
         </TabsContent>
@@ -568,10 +445,7 @@ export function SettingsPage() {
                     Saving...
                   </>
                 ) : (
-                  <>
-                    <Save className="mr-2 h-4 w-4" />
-                    Save Configuration
-                  </>
+                  <>Save Configuration</>
                 )}
               </Button>
             </CardContent>

@@ -9,16 +9,15 @@ export function useConnection() {
     // Проверяем соединение при монтировании
     checkConnection();
 
-    // Проверяем соединение каждые 5 секунд
-    const interval = setInterval(checkConnection, 5000);
+    // Проверяем соединение каждые 30 секунд
+    const interval = setInterval(checkConnection, 30000);
 
     return () => clearInterval(interval);
   }, []);
 
   async function checkConnection() {
     try {
-      // Пытаемся сделать простой запрос к серверу
-      await apiRequest("/settings");
+      await apiRequest("/battery");
       setIsConnected(true);
     } catch (error) {
       setIsConnected(false);

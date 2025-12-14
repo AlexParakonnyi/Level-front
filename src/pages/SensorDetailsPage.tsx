@@ -1,11 +1,10 @@
 // pages/SensorDetailsPage.tsx
-import { useMemo } from "react";
+import { useMemo, useEffect } from "react";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { calculateProcessedData } from "@/utils/sensorCalculations";
 import { RawSensorData } from "@/components/RawSensorData";
 import { SensorDataDisplay } from "@/components/SensorDataDisplay";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
@@ -13,15 +12,17 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { RefreshCw, WifiOff, Activity, TrendingUp } from "lucide-react";
+import { Activity, TrendingUp } from "lucide-react";
+import { useToast } from "@/contexts/ToastContext";
 
 export function SensorDetailsPage() {
   const { sensorData, isConnected, error, messageRate, reconnect } =
     useWebSocket("ws", {
       reconnectDelay: 2000,
       maxReconnectAttempts: 10,
-      // pingInterval: 30000,
     });
+
+  const { addToast } = useToast();
 
   // Вычисляем обработанные данные
   const processedData = useMemo(() => {
@@ -66,23 +67,12 @@ export function SensorDetailsPage() {
     };
   }, [sensorData]);
 
-  // Показываем ошибку
-  if (error) {
-    return (
-      <div className="space-y-4">
-        <Alert variant="destructive">
-          <WifiOff className="h-4 w-4" />
-          <AlertDescription className="flex items-center justify-between">
-            <span>{error}</span>
-            <Button onClick={reconnect} size="sm" variant="outline">
-              <RefreshCw className="w-4 h-4 mr-2" />
-              Retry
-            </Button>
-          </AlertDescription>
-        </Alert>
-      </div>
-    );
-  }
+  // Показываем ошибку через toast вместо Alert
+  useEffect(() => {
+    if (error) {
+      addToast(error, "error");
+    }
+  }, [error, addToast]);
 
   // Показываем загрузку
   if (!sensorData || !processedData || !additionalMetrics) {
